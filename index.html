@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f9fc">
+  <meta name="description" content="记录每一次到场，看见健身卡的每次成本。">
+  <meta name="color-scheme" content="light">
+  <title>每次 · 健身打卡</title>
+  <link rel="icon" href="./public/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./src/styles.css">
+  <script type="module" src="./src/app.mjs"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <a href="#home" class="brand" aria-label="每次首页"><span class="brand-symbol" aria-hidden="true">m<span>·</span></span><span>每次<small>记录到场，看见改变</small></span></a>
+      <button class="card-switch" id="card-switch" type="button" aria-label="查看健身卡"><span class="status-dot" aria-hidden="true"></span><span id="header-card">我的健身卡</span><span aria-hidden="true">⌄</span></button>
+    </header>
+    <div id="storage-warning" class="warning" hidden role="alert"></div>
+    <main id="main" tabindex="-1"></main>
+    <nav class="bottom-nav" aria-label="主导航">
+      <a href="#home" data-nav="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10H15v-7H9v7H3Z"/></svg><span>首页</span></a>
+      <a href="#records" data-nav="records"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18m-13 5h2m4 0h2"/></svg><span>记录</span></a>
+      <a href="#cards" data-nav="cards"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="15" rx="3"/><path d="M2 10h20M6 15h4"/></svg><span>卡片</span></a>
+    </nav>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden><span id="toast-text"></span><button type="button" id="toast-undo" hidden>撤销</button></div>
+  <dialog id="card-dialog" aria-labelledby="card-dialog-title">
+    <form id="card-form">
+      <header class="dialog-header"><div><p class="eyebrow">我的健身卡</p><h2 id="card-dialog-title">添加第一张卡</h2></div><button class="icon-button" type="button" data-close aria-label="关闭卡片编辑">×</button></header>
+      <p class="form-intro">记录这张卡，开始计算每次到场的成本。</p>
+      <label>卡片名称<input name="name" required maxlength="60" placeholder="例如：我的年卡" autocomplete="off"></label>
+      <div class="form-grid"><label>实付金额（元）<input name="amount" type="number" inputmode="decimal" min="0.01" max="10000000000" step="0.01" required placeholder="2400"></label><label>目标单次成本（元）<input name="target" type="number" inputmode="decimal" min="0.01" max="10000000000" step="0.01" required placeholder="20"></label></div>
+      <fieldset class="duration-fieldset"><legend>办卡时长</legend><div class="duration-options" aria-label="选择办卡时长">
+        <button type="button" data-duration="1" aria-pressed="false">月卡<span>1 个月</span></button>
+        <button type="button" data-duration="3" aria-pressed="false">季卡<span>3 个月</span></button>
+        <button type="button" data-duration="6" aria-pressed="false">半年卡<span>6 个月</span></button>
+        <button type="button" data-duration="12" aria-pressed="true">年卡<span>12 个月</span></button>
+        <button type="button" data-duration="custom" aria-pressed="false">自定义<span>输入时长</span></button>
+        <button type="button" data-duration="dates" aria-pressed="false">按日期<span>手动设置</span></button>
+      </div><div class="duration-custom" id="duration-custom" hidden><label>自定义时长<input name="durationValue" type="number" inputmode="numeric" min="1" max="110000" step="1" value="1" disabled></label><label>单位<select name="durationUnit" disabled><option value="days">天</option><option value="months">个月</option><option value="years">年</option></select></label></div></fieldset>
+      <div class="form-grid"><label>生效日期<input name="start" type="date" required min="1900-01-01" max="2200-12-31" aria-describedby="duration-hint"></label><label><span id="end-date-label">到期日期（自动计算）</span><input name="end" type="date" required min="1900-01-01" max="2200-12-31" aria-describedby="duration-hint"></label></div>
+      <p class="field-hint" id="duration-hint" role="status">选择时长后自动计算到期日期，也可直接修改。</p>
+      <label>此前已去次数<input name="initial" type="number" inputmode="numeric" min="0" max="1000000" step="1" required value="0" aria-describedby="initial-hint"></label>
+      <p class="field-hint" id="initial-hint">没有具体日期的历史次数，计入累计次数和成本，不计入周、月统计或健身天数。已逐次补录的次数不要重复填写。</p>
+      <p class="form-error" id="card-error" role="alert" tabindex="-1" hidden></p>
+      <button class="primary-button" type="submit">保存卡片</button>
+    </form>
+  </dialog>
+  <dialog id="visit-dialog" aria-labelledby="visit-dialog-title">
+    <form id="visit-form"><header class="dialog-header"><div><p class="eyebrow">补上一次到场</p><h2 id="visit-dialog-title">补录打卡</h2></div><button class="icon-button" type="button" data-close aria-label="关闭补录">×</button></header><label>到店日期与时间<input name="at" type="datetime-local" required></label><p class="field-hint" id="visit-hint"></p><p class="form-error" id="visit-error" role="alert" tabindex="-1" hidden></p><button class="primary-button" type="submit">保存这次打卡</button></form>
+  </dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><div class="confirm-content"><h2 id="confirm-title"></h2><p id="confirm-description"></p><div class="confirm-actions"><button class="secondary-button" id="confirm-cancel" type="button">取消</button><button class="primary-button" id="confirm-yes" type="button">确认</button></div></div></dialog>
+  <input id="import-file" type="file" accept="application/json,.json" hidden>
+  <noscript><p class="warning">请启用 JavaScript 后使用，每次的数据保存在你的浏览器本机。</p></noscript>
+</body>
+</html>
