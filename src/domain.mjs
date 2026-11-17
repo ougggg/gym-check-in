@@ -109,6 +109,23 @@ export function stats(card, date = today()) {
   };
 }
 
+// 按当前卡费重算；无日期历史次数只作基数，不生成虚构的历史点。
+export function costTrend(card, range = 'month', date = today()) {
+  if (!['month', 'all'].includes(range)) fail('请选择有效的趋势范围');
+  const cutoff = dayNumber(date) - 29;
+  return [...card.visits].sort((a, b) => a.at.localeCompare(b.at)).map((visit, index) => ({
+    at: visit.at, total: card.initial + index + 1, cost: card.amount / (card.initial + index + 1)
+  })).filter(point => range === 'all' || (dayNumber(point.at.slice(0, 10)) >= cutoff && point.at.slice(0, 10) <= date));
+}
+
+export function forecastCost(card, weekly, date = today()) {
+  if (!integer(weekly, 0, 100)) fail('每周次数须为 0 至 100 的整数');
+  const s = stats(card, date);
+  const additional = Math.floor(s.daysLeft * weekly / 7);
+  const total = s.total + additional;
+  return { weekly, days: s.daysLeft, additional, total, cost: total ? card.amount / total : null, reachesTarget: total >= s.required };
+}
+
 export function parseBackup(raw, now = localDateTime()) {
   let parsed;
   try { parsed = JSON.parse(raw); } catch { fail('备份文件无法读取，请选择导出的 JSON 文件'); }

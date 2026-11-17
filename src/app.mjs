@@ -1,5 +1,6 @@
-import { addVisit, dayNumber, endDateForDuration, localDateTime, mergeBackup, moneyToCents, parseBackup, shiftDate, stats, today, validateState } from './domain.mjs';
-import { loadData, saveData, STORAGE_KEY } from './storage.mjs';
+import { addVisit, costTrend, dayNumber, endDateForDuration, localDateTime, mergeBackup, moneyToCents, parseBackup, shiftDate, stats, today, validateState } from './domain.mjs';
+import { backupStatus, BACKUP_KEY, loadData, prepareBackup, recordBackup, saveData, STORAGE_KEY } from './storage.mjs';
+import { renderInsights, trendDetail } from './insights.mjs';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -9,6 +10,7 @@ let state = { version: 1, cards: [] }, raw = null, blocked = false, selectedId =
 let editId = null, editingRaw = null, recordMonth = today().slice(0, 7), recordDate = null, recordLimit = 40, visitCardId = null;
 let toastTimer, undo = null, confirmAction = null, lastDay = today(), installPrompt = null;
 let durationMode = '12';
+let trendRange = 'month', renderVersion = 0, backupRefreshId = 0, exporting = false;
 
 function syncDuration(recalculate = true) {
   const form = $('#card-form'), custom = durationMode === 'custom', manual = durationMode === 'dates';
@@ -78,8 +80,45 @@ function cardPicker(card) {
   if (state.cards.length < 2) return '';
   return `<label class="card-selector">查看办卡周期<select id="period-select">${[...state.cards].sort((a, b) => b.start.localeCompare(a.start)).map(c => `<option value="${c.id}" ${c.id === card.id ? 'selected' : ''}>${escape(c.name)} · ${c.start} — ${c.end}</option>`).join('')}</select></label>`;
 }
+function backupNotice(withAction = true) {
+  return `<aside class="backup-reminder" data-backup-notice hidden aria-label="备份提醒"><div><h3>给记录留一份备份</h3><p data-backup-message></p></div>${withAction ? `<button class="secondary-button" data-action="export">${icon('download')}导出备份</button>` : ''}</aside>`;
+}
+async function refreshBackupReminder(version = renderVersion) {
+  if (blocked || !state.cards.length) return;
+  const requestId = ++backupRefreshId;
+  const result = await backupStatus(state);
+  if (version !== renderVersion || requestId !== backupRefreshId) return;
+  const label = result.exportedAt ? `上次生成备份：${new Date(result.exportedAt).toLocaleString('zh-CN')}` : '尚无本机导出记录';
+  document.querySelectorAll('[data-backup-time]').forEach(el => { el.textContent = `${label}。生成下载后，请确认文件已保存。`; });
+  const message = {
+    never: '还没有本机导出记录，建议现在保存一份。',
+    changed: '有新增或修改尚未导出，记得保存最新记录。',
+    due: `距上次生成备份已 ${result.days} 天，建议再保存一份。`,
+    unavailable: '暂时无法读取导出状态，你仍可手动导出备份。'
+  }[result.reason];
+  document.querySelectorAll('[data-backup-notice]').forEach(el => {
+    el.hidden = !message;
+    el.querySelector('[data-backup-message]').textContent = message || '';
+  });
+}
+async function exportBackup() {
+  if (exporting) return;
+  exporting = true;
+  document.querySelectorAll('[data-action="export"]').forEach(el => { el.disabled = true; });
+  try {
+    const prepared = await prepareBackup(state);
+    download(prepared.content, `每次-健身备份-${today()}.json`);
+    recordBackup(prepared.metadata);
+    await refreshBackupReminder();
+    notify('已生成备份，请在下载列表中确认保存');
+  } catch (error) { notify(error.message); }
+  finally {
+    exporting = false;
+    document.querySelectorAll('[data-action="export"]').forEach(el => { el.disabled = false; });
+  }
+}
 function backupSection() {
-  return `<section class="backup-section"><h3>数据只属于你</h3><p>记录保存在当前浏览器。换手机、清理浏览器数据前，记得导出一份备份。</p><div class="backup-actions"><button class="secondary-button" data-action="export">${icon('download')}导出备份</button><button class="secondary-button" data-action="import">${icon('upload')}导入备份</button></div><p>导入会合并记录，不会删除现有数据；信息冲突时会停止导入。</p><div class="install-note">${installPrompt ? '<button class="secondary-button" data-action="install">添加到手机桌面</button>' : '添加到桌面：在安卓浏览器菜单中查找“安装应用”或“添加到主屏幕”。安装功能需要 HTTPS 访问。'}<br>本应用无账号，不会上传你的卡片或打卡记录。</div></section>`;
+  return `<section class="backup-section"><h3>数据只属于你</h3><p>记录保存在当前浏览器。换手机、清理浏览器数据前，记得导出一份备份。</p><p data-backup-time>正在读取上次导出时间…</p>${backupNotice(false)}<div class="backup-actions"><button class="secondary-button" data-action="export">${icon('download')}导出备份</button><button class="secondary-button" data-action="import">${icon('upload')}导入备份</button></div><p>导入会合并记录，不会删除现有数据；信息冲突时会停止导入。</p><div class="install-note">${installPrompt ? '<button class="secondary-button" data-action="install">添加到手机桌面</button>' : '添加到桌面：在安卓浏览器菜单中查找“安装应用”或“添加到主屏幕”。安装功能需要 HTTPS 访问。'}<br>本应用无账号，不会上传你的卡片或打卡记录。</div></section>`;
 }
 function empty(view) {
   return `<section class="empty-state"><div class="empty-illustration">${icon('card')}</div><h1>每次到场，都算数。</h1><p>花了多少钱，去了多少次。<br>从第一张健身卡开始，看见每次坚持的成本。</p><button class="primary-button" data-action="new-card">${icon('plus')}添加我的健身卡</button><div class="empty-note">已有历史记录？<button class="text-button" data-action="import">导入备份</button></div><div class="empty-preview"><div>${icon('chart')}每次成本，随着到场更新</div><div>${icon('calendar')}这一周、这个月，记录清清楚楚</div><div>${icon('check')}设定目标，看看还差几次</div></div></section>${view === 'cards' ? backupSection() : ''}`;
@@ -123,7 +162,8 @@ function render() {
   const view = ['home', 'records', 'cards'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'home', card = currentCard();
   $('#header-card').textContent = card?.name || '我的健身卡';
   document.querySelectorAll('[data-nav]').forEach(el => { if (el.dataset.nav === view) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current'); });
-  $('#main').innerHTML = blocked ? '<section class="quiet-empty">原始数据已保留。请先导出原始数据，以便检查或恢复。</section>' : !card ? empty(view) : view === 'home' ? home(card) : view === 'records' ? records(card) : cards(card);
+  $('#main').innerHTML = blocked ? '<section class="quiet-empty">原始数据已保留。请先导出原始数据，以便检查或恢复。</section>' : !card ? empty(view) : view === 'home' ? `${home(card)}${renderInsights(card, trendRange)}${backupNotice()}` : view === 'records' ? records(card) : cards(card);
+  void refreshBackupReminder(++renderVersion);
 }
 function openCard(edit = false) {
   const card = edit ? currentCard() : null;
@@ -174,6 +214,12 @@ function download(content, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 document.addEventListener('click', event => {
+  const rangeButton = event.target.closest('[data-trend-range]');
+  if (rangeButton) {
+    trendRange = rangeButton.dataset.trendRange; render();
+    document.querySelector(`[data-trend-range="${trendRange}"]`)?.focus({ preventScroll: true });
+    return;
+  }
   const button = event.target.closest('[data-action], [data-remove], [data-date]'); if (!button) return;
   try {
     if (button.dataset.remove) return revoke(currentCard().id, button.dataset.remove);
@@ -183,13 +229,18 @@ document.addEventListener('click', event => {
       case 'edit-card': openCard(true); break;
       case 'backfill': openVisit(); break;
       case 'check': checkIn(); break;
-      case 'export': download(JSON.stringify({ ...state, exportedAt: new Date().toISOString() }, null, 2), `每次-健身备份-${today()}.json`); notify('已生成备份，请在下载列表中确认保存'); break;
+      case 'export': void exportBackup(); break;
       case 'import': $('#import-file').click(); break;
       case 'clear-date': recordDate = null; recordLimit = 40; render(); break;
       case 'load-more': recordLimit += 40; render(); break;
       case 'install': if (installPrompt) { installPrompt.prompt(); installPrompt = null; render(); } break;
     }
   } catch (error) { notify(error.message); }
+});
+document.addEventListener('input', event => {
+  if (event.target.id !== 'trend-point') return;
+  const point = costTrend(currentCard(), trendRange)[Number(event.target.value)];
+  if (point) $('#trend-detail').textContent = trendDetail(point);
 });
 $('#card-form').addEventListener('submit', event => {
   event.preventDefault();
@@ -242,6 +293,7 @@ function load() {
   }
 }
 window.addEventListener('storage', event => {
+  if (event.key === BACKUP_KEY) { void refreshBackupReminder(); return; }
   if (event.key !== STORAGE_KEY && event.key !== null) return;
   document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()); load(); render(); notify('已同步其他页面的本机数据，请重新打开未保存的编辑');
 });
